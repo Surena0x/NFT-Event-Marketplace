@@ -23,6 +23,23 @@ contract marketPlace is Ownable {
         uint256 indexed _eventTicketPrice
     );
 
+    event NFTItemListed(
+        uint256 itemId,
+        address indexed nft,
+        uint256 tokenId,
+        uint256 price,
+        address indexed seller
+    );
+
+    event Bought(
+        uint256 itemId,
+        address indexed nft,
+        uint256 tokenId,
+        uint256 price,
+        address indexed seller,
+        address indexed buyer
+    );
+
     Counters.Counter private _itemTracker;
     Counters.Counter private _soldItems;
     Counters.Counter private _eventCounter;
@@ -56,6 +73,71 @@ contract marketPlace is Ownable {
         NFTContractInstance = NFTContract(_NFTContractInstance);
     }
 
+    // NFT TOKEN SECTION
+
+    function listNFTItem(
+        IERC721 _nft,
+        uint256 _tokenId,
+        uint256 _price
+    ) external {
+        require(_price > 0, "Price must be greater than zero");
+
+        _itemTracker.increment();
+        uint256 _itemCount = _itemTracker.current();
+
+        _nft.transferFrom(msg.sender, address(this), _tokenId);
+
+        _NFTItem[_itemCount] = NFTItem(
+            _itemCount,
+            _nft,
+            _tokenId,
+            _price,
+            payable(msg.sender),
+            payable(address(0)),
+            false
+        );
+
+        emit NFTItemListed(
+            _itemCount,
+            address(_nft),
+            _tokenId,
+            _price,
+            address(msg.sender)
+        );
+    }
+
+    function buyNFTItem(uint256 _itemID) external payable {
+        uint256 _itemCount = _itemTracker.current();
+        require(_itemID > 0 && _itemID <= _itemCount, "Item is not existing");
+
+        uint256 _itemPrice = getItemTotalPrice(_itemID);
+        require(msg.value == _itemPrice, " not enough money to pay");
+
+        NFTItem storage _item = _NFTItem[_itemID];
+        require(_item.sold == false, "item is sold");
+
+        _item.seller.transfer(_itemPrice);
+        _item.owner = payable(msg.sender);
+        _item.sold = true;
+        _item.nft.transferFrom(address(this), msg.sender, _item.tokenId);
+
+        _soldItems.increment();
+
+        emit Bought(
+            _itemID,
+            address(_item.nft),
+            _item.tokenId,
+            _itemPrice,
+            address(_item.seller),
+            address(msg.sender)
+        );
+    }
+
+    function getItemTotalPrice(uint256 _itemID) public view returns (uint256) {
+        return (_NFTItem[_itemID].price);
+    }
+
+    // EVENT SECTION
     function createEvent(uint256 _eventTicketPrice) external {
         _eventCounter.increment();
         uint256 _newEventID = _eventCounter.current();

@@ -20,6 +20,42 @@ describe("NFT", () => {
     // set marketplace address
     await NFTContract.setMarketPlace(marketPlaceContract.address);
 
+    /// mint new nft
+    await NFTContract.connect(deployer).mintToken("Test");
+
+    // list nft in market
+    await expect(
+      marketPlaceContract
+        .connect(deployer)
+        .listNFTItem(NFTContract.address, 1, ethers.utils.parseEther("1"))
+    )
+      .to.emit(marketPlaceContract, "NFTItemListed")
+      .withArgs(
+        1,
+        NFTContract.address,
+        1,
+        ethers.utils.parseEther("1"),
+        deployer.address
+      );
+
+    // buy nft item 1 in market
+    await expect(
+      await marketPlaceContract
+        .connect(user1)
+        .buyNFTItem(1, { value: ethers.utils.parseEther("1") })
+    )
+      .to.emit(marketPlaceContract, "Bought")
+      .withArgs(
+        1,
+        NFTContract.address,
+        1,
+        ethers.utils.parseEther("1"),
+        deployer.address,
+        user1.address
+      );
+
+    expect(await NFTContract.ownerOf(1)).equal(user1.address);
+
     // set NFT Contract address
     await marketPlaceContract.setNFTContractInstance(NFTContract.address);
 
