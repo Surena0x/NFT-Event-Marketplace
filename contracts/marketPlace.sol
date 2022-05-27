@@ -4,12 +4,21 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./NFTContract.sol";
 
-contract marketPlace is Ownable {
+contract marketPlace is ReentrancyGuard, Ownable {
     using Counters for Counters.Counter;
+
+    Counters.Counter public _itemTracker;
+    Counters.Counter public _soldItems;
+    Counters.Counter public _eventCounter;
+
+    uint256 public NFTTokenFee;
+    uint256 public createEventFee;
+    uint256 public sellEventTicketFee;
 
     event EventCreated(
         address indexed _eventOwner,
@@ -40,11 +49,10 @@ contract marketPlace is Ownable {
         address indexed buyer
     );
 
-    Counters.Counter private _itemTracker;
-    Counters.Counter private _soldItems;
-    Counters.Counter private _eventCounter;
-
     NFTContract NFTContractInstance;
+
+    uint256 public eventCreateFee;
+    uint256 public NFTItemListFee;
 
     struct Event {
         address payable creator;
@@ -53,7 +61,7 @@ contract marketPlace is Ownable {
         address[] users;
         uint256 maxCap;
     }
-    mapping(uint256 => Event) EventMapping;
+    mapping(uint256 => Event) public EventMapping;
 
     struct NFTItem {
         uint256 itemId;
@@ -64,22 +72,29 @@ contract marketPlace is Ownable {
         address payable owner;
         bool sold;
     }
-    mapping(uint256 => NFTItem) private _NFTItem;
+    mapping(uint256 => NFTItem) public _NFTItem;
+
+    modifier onlyCreator(uint256 _eventID) {
+        Event memory _eventItem = EventMapping[_eventID];
+        require(msg.sender == _eventItem.creator);
+        _;
+    }
 
     function setNFTContractInstance(address _NFTContractInstance)
         external
         onlyOwner
+        returns (bool)
     {
         NFTContractInstance = NFTContract(_NFTContractInstance);
+        return true;
     }
 
-    // NFT TOKEN SECTION
-
+    //////////////////////////////////////////////////////////////////////////////////////// NFT SECTION
     function listNFTItem(
         IERC721 _nft,
         uint256 _tokenId,
         uint256 _price
-    ) external {
+    ) external nonReentrant returns (bool) {
         require(_price > 0, "Price must be greater than zero");
 
         _itemTracker.increment();
@@ -104,9 +119,16 @@ contract marketPlace is Ownable {
             _price,
             address(msg.sender)
         );
+
+        return true;
     }
 
-    function buyNFTItem(uint256 _itemID) external payable {
+    function buyNFTItem(uint256 _itemID)
+        external
+        payable
+        nonReentrant
+        returns (bool)
+    {
         uint256 _itemCount = _itemTracker.current();
         require(_itemID > 0 && _itemID <= _itemCount, "Item is not existing");
 
@@ -116,7 +138,9 @@ contract marketPlace is Ownable {
         NFTItem storage _item = _NFTItem[_itemID];
         require(_item.sold == false, "item is sold");
 
-        _item.seller.transfer(_itemPrice);
+        uint256 _paymentToNFTSeller = _itemPrice - (_itemPrice / 10);
+
+        _item.seller.transfer(_paymentToNFTSeller);
         _item.owner = payable(msg.sender);
         _item.sold = true;
         _item.nft.transferFrom(address(this), msg.sender, _item.tokenId);
@@ -131,14 +155,96 @@ contract marketPlace is Ownable {
             address(_item.seller),
             address(msg.sender)
         );
+
+        return true;
     }
 
+    //////////////////////////////////////////////////////////////////////////////////////// NFT ITEM GETTERS
     function getItemTotalPrice(uint256 _itemID) public view returns (uint256) {
         return (_NFTItem[_itemID].price);
     }
 
-    // EVENT SECTION
-    function createEvent(uint256 _eventTicketPrice) external {
+    function getMarketItems() external view returns (NFTItem[] memory) {
+        uint256 totalItems = _itemTracker.current();
+        uint256 unSoldItems = totalItems - _soldItems.current();
+
+        uint256 currentIndex = 0;
+
+        NFTItem[] memory marketItems = new NFTItem[](unSoldItems);
+
+        for (uint256 i = 0; i < totalItems; i++) {
+            if (_NFTItem[i + 1].owner == address(0)) {
+                uint256 currentItemId = _NFTItem[i + 1].itemId;
+                NFTItem storage currentItem = _NFTItem[currentItemId];
+                marketItems[currentIndex] = currentItem;
+                currentIndex += 1;
+            }
+        }
+
+        return marketItems;
+    }
+
+    function getMyNFTItems() external view returns (NFTItem[] memory) {
+        uint256 totalItems = _itemTracker.current();
+        uint256 itemCount = 0;
+
+        for (uint256 i = 0; i < totalItems; i++) {
+            if (_NFTItem[i + 1].owner == msg.sender) {
+                itemCount += 1;
+            }
+        }
+
+        uint256 currentIndex = 0;
+        NFTItem[] memory marketItems = new NFTItem[](itemCount);
+
+        for (uint256 i = 0; i < totalItems; i++) {
+            if (_NFTItem[i + 1].owner == msg.sender) {
+                uint256 currentItemId = _NFTItem[i + 1].itemId;
+                NFTItem storage currentItem = _NFTItem[currentItemId];
+                marketItems[currentIndex] = currentItem;
+                currentIndex += 1;
+            }
+        }
+
+        return marketItems;
+    }
+
+    function getMyNFTForSale() external view returns (NFTItem[] memory) {
+        uint256 totalItems = _itemTracker.current();
+        uint256 itemCount = 0;
+
+        for (uint256 i = 0; i < totalItems; i++) {
+            if (_NFTItem[i + 1].seller == msg.sender) {
+                itemCount += 1;
+            }
+        }
+
+        uint256 currentIndex = 0;
+        NFTItem[] memory marketItems = new NFTItem[](itemCount);
+
+        for (uint256 i = 0; i < totalItems; i++) {
+            if (_NFTItem[i + 1].seller == msg.sender) {
+                uint256 currentItemId = _NFTItem[i + 1].itemId;
+                NFTItem storage currentItem = _NFTItem[currentItemId];
+                marketItems[currentIndex] = currentItem;
+                currentIndex += 1;
+            }
+        }
+
+        return marketItems;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////// EVENT SECTION
+    function createEvent(uint256 _eventTicketPrice, uint256 _eventMaxCap)
+        external
+        payable
+        nonReentrant
+        returns (bool)
+    {
+        require(
+            msg.value == (_eventTicketPrice / 10),
+            "you need to pay for create event"
+        );
         _eventCounter.increment();
         uint256 _newEventID = _eventCounter.current();
 
@@ -146,21 +252,39 @@ contract marketPlace is Ownable {
         _newEvent.creator = payable(msg.sender);
         _newEvent.eventID = _newEventID;
         _newEvent.price = _eventTicketPrice;
-        _newEvent.maxCap = 2;
+        _newEvent.maxCap = _eventMaxCap;
 
         EventMapping[_newEventID] = _newEvent;
 
         emit EventCreated(msg.sender, _newEventID, _eventTicketPrice);
+
+        return true;
     }
 
-    function mintTicket(uint256 _eventID) external payable {
+    function mintTicket(uint256 _eventID)
+        external
+        payable
+        nonReentrant
+        returns (bool)
+    {
         uint256 _totalEventNumber = _eventCounter.current();
-        require(_eventID <= _totalEventNumber);
+        require(_eventID <= _totalEventNumber, "Event is not exist");
 
         Event memory _eventItem = EventMapping[_eventID];
-        require(msg.value == _eventItem.price);
+        require(
+            msg.value == _eventItem.price,
+            "Not enough money to pay ticket price"
+        );
 
-        _eventItem.creator.transfer(_eventItem.price);
+        require(
+            _eventItem.users.length < _eventItem.maxCap,
+            "event cap is full"
+        );
+
+        uint256 _paymentToNFTSeller = _eventItem.price -
+            (_eventItem.price / 10);
+
+        _eventItem.creator.transfer(_paymentToNFTSeller);
 
         string memory _ticketURI = Strings.toString(_eventID);
 
@@ -170,6 +294,8 @@ contract marketPlace is Ownable {
         EventMapping[_eventID].users.push(_userAddress);
 
         emit ticketMinted(_userAddress, _eventID, _eventItem.price);
+
+        return true;
     }
 
     function eventWhiteList(uint256 _eventID)
@@ -180,6 +306,20 @@ contract marketPlace is Ownable {
         return EventMapping[_eventID].users;
     }
 
+    function changeEventPrice(uint256 _eventID, uint256 _newPrice)
+        external
+        onlyCreator(_eventID)
+        returns (bool)
+    {
+        Event memory _eventItem = EventMapping[_eventID];
+
+        _eventItem.price = _newPrice;
+        EventMapping[_eventID] = _eventItem;
+
+        return true;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////// EVENT GETTERS
     function getMyEventsJoined() external view returns (Event[] memory) {
         uint256 _maxEventItems = _eventCounter.current();
         uint256 _EventArrayLength;
@@ -236,5 +376,67 @@ contract marketPlace is Ownable {
         }
 
         return _eventItems;
+    }
+
+    function getEventItem(uint256 _eventID)
+        external
+        view
+        returns (
+            address,
+            uint256,
+            uint256,
+            address[] memory,
+            uint256
+        )
+    {
+        uint256 _totalEventNumber = _eventCounter.current();
+        require(_eventID <= _totalEventNumber, "Event is not exist");
+        Event memory _eventItem = EventMapping[_eventID];
+
+        return (
+            _eventItem.creator,
+            _eventItem.price,
+            _eventItem.eventID,
+            _eventItem.users,
+            _eventItem.maxCap
+        );
+    }
+
+    function getEventUsers(uint256 _eventID)
+        external
+        view
+        returns (address[] memory)
+    {
+        Event memory _event = EventMapping[_eventID];
+        return _event.users;
+    }
+
+    function getEventMaxCap(uint256 _eventID) external view returns (uint256) {
+        Event memory _event = EventMapping[_eventID];
+        return _event.maxCap;
+    }
+
+    function getEventTicketPrice(uint256 _eventID)
+        external
+        view
+        returns (uint256)
+    {
+        Event memory _event = EventMapping[_eventID];
+        return _event.price;
+    }
+
+    function getEventCreator(uint256 _eventID) external view returns (address) {
+        Event memory _event = EventMapping[_eventID];
+        return _event.creator;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////// Market Balance
+    function getMarketBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+    function withdrawContractBalance() external onlyOwner returns (bool) {
+        payable(msg.sender).transfer(address(this).balance);
+        return true;
     }
 }

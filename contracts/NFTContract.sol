@@ -8,12 +8,12 @@ import "@openzeppelin/contracts/utils/Counters.sol";
 contract NFTContract is ERC721URIStorage, Ownable {
     using Counters for Counters.Counter;
 
-    Counters.Counter private NFTItemTracker;
+    Counters.Counter public NFTItemTracker;
     mapping(uint256 => string) private NFTIDToURI;
 
-    address public marketPlace;
+    address marketPlace;
 
-    constructor() ERC721("DApp", "DAPP") {}
+    constructor() ERC721("DAPP", "DAPP") {}
 
     function setMarketPlace(address _marketPlaceAddress) external onlyOwner {
         marketPlace = _marketPlaceAddress;
