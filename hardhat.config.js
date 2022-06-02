@@ -47,9 +47,16 @@ module.exports = {
       accounts:
         process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
+    rinkeby: {
+      url: "https://eth-rinkeby.alchemyapi.io/v2/95OwDP0G10kuCoIhZHr5axVyvE15Yvo_",
+      accounts:
+        process.env.RINKEBY_PRIVATE_KEY !== undefined
+          ? [process.env.RINKEBY_PRIVATE_KEY]
+          : [],
+    },
   },
   gasReporter: {
-    enabled: true,
+    enabled: false,
     currency: "USD",
     gasPrice: 21,
     coinmarketcap: process.env.COIN_MARKET_CAP_API,

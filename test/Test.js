@@ -71,11 +71,12 @@ describe("NFTMarketplace", () => {
     beforeEach(async () => {
       // addr1 mints an nft
       await NFTContract.connect(addr1).mintToken(URI);
+      await NFTContract.connect(addr2).mintToken(URI);
     });
 
     // eslint-disable-next-line no-undef
     it("Should track newly created item, transfer NFT from seller to marketplace and emit Offered event", async () => {
-      // addr1 offers their nft at a price of 1 ether
+      // addr1 list his NFT in market
       await expect(
         MarketplaceContarct.connect(addr1).listNFTItem(
           NFTContract.address,
@@ -85,14 +86,29 @@ describe("NFTMarketplace", () => {
       )
         .to.emit(MarketplaceContarct, "NFTItemListed")
         .withArgs(1, NFTContract.address, 1, toWei(price), addr1.address);
+
+      // addr2 list his NFT in market
+      await expect(
+        MarketplaceContarct.connect(addr2).listNFTItem(
+          NFTContract.address,
+          2,
+          toWei(price)
+        )
+      )
+        .to.emit(MarketplaceContarct, "NFTItemListed")
+        .withArgs(2, NFTContract.address, 2, toWei(price), addr2.address);
       // Owner of NFT should now be the marketplace
       expect(await NFTContract.ownerOf(1)).to.equal(
         MarketplaceContarct.address
       );
-      // Item count should now equal 1
+
+      expect(await NFTContract.ownerOf(2)).to.equal(
+        MarketplaceContarct.address
+      );
+      // Item count in marketplace should now equal 2 because we listed 2 NFT
       // eslint-disable-next-line no-underscore-dangle
-      expect(await MarketplaceContarct._itemTracker()).to.equal(1);
-      // Get item from items mapping then check fields to ensure they are correct
+      expect(await MarketplaceContarct._itemTracker()).to.equal(2);
+      // now check somethings from NFT item 1
       // eslint-disable-next-line no-underscore-dangle
       const item = await MarketplaceContarct._NFTItem(1);
       expect(item.itemId).to.equal(1);
@@ -100,10 +116,12 @@ describe("NFTMarketplace", () => {
       expect(item.tokenId).to.equal(1);
       expect(item.price).to.equal(toWei(price));
       expect(item.sold).to.equal(false);
+      expect(item.seller).to.equal(addr1.address);
     });
 
     // eslint-disable-next-line no-undef
-    it("Should fail if price is set to zero", async () => {
+    it("Should fail", async () => {
+      // problem with price
       await expect(
         MarketplaceContarct.connect(addr1).listNFTItem(
           NFTContract.address,
@@ -111,6 +129,15 @@ describe("NFTMarketplace", () => {
           0
         )
       ).to.be.revertedWith("Price must be greater than zero");
+
+      // problem with owner of NFT
+      await expect(
+        MarketplaceContarct.connect(addr2).listNFTItem(
+          NFTContract.address,
+          1,
+          toWei(price)
+        )
+      ).to.be.revertedWith("You are not owner of this NFT");
     });
   });
 
@@ -120,7 +147,8 @@ describe("NFTMarketplace", () => {
     let totalPriceInWei;
     // eslint-disable-next-line no-undef
     beforeEach(async () => {
-      // addr1 mints an nft
+      // addr1 mints 2 nfts
+      await NFTContract.connect(addr1).mintToken(URI);
       await NFTContract.connect(addr1).mintToken(URI);
       // addr1 makes their nft a marketplace item.
       await MarketplaceContarct.connect(addr1).listNFTItem(
@@ -128,13 +156,21 @@ describe("NFTMarketplace", () => {
         1,
         toWei(price)
       );
+      await MarketplaceContarct.connect(addr1).listNFTItem(
+        NFTContract.address,
+        2,
+        toWei(price)
+      );
     });
     // eslint-disable-next-line no-undef
     it("Should update item as sold, pay seller, transfer NFT to buyer, charge fees and emit a Bought event", async () => {
-      const sellerInitalEthBal = await addr1.getBalance();
+      // 2 NFT tokens should listed !
+      expect(await MarketplaceContarct.getTotalItemsListed()).to.equal(2);
 
+      // get seller info before make any sell
+      let sellerBalanceBeforeMakeSell = await addr1.getBalance();
       totalPriceInWei = await MarketplaceContarct.getItemTotalPrice(1);
-      // addr 2 purchases item.
+      // addr 2 purchases NFT 1.
       await expect(
         MarketplaceContarct.connect(addr2).buyNFTItem(1, {
           value: totalPriceInWei,
@@ -146,53 +182,74 @@ describe("NFTMarketplace", () => {
           NFTContract.address,
           1,
           toWei(price),
-          addr1.address,
+          "0x0000000000000000000000000000000000000000",
           addr2.address
         );
-      const sellerFinalEthBal = await addr1.getBalance();
+
+      let sellerBalanceAfterMakeSell = await addr1.getBalance();
+      expect(sellerBalanceAfterMakeSell).to.be.above(
+        sellerBalanceBeforeMakeSell
+      );
       // Item should be marked as sold
       // eslint-disable-next-line no-underscore-dangle
       expect((await MarketplaceContarct._NFTItem(1)).sold).to.equal(true);
-      // Seller should receive payment for the price of the NFT sold.
-      expect(+fromWei(sellerFinalEthBal)).to.greaterThan(
-        +fromWei(sellerInitalEthBal)
-      );
-      console.log(
-        "Market balance after get 10% fee from NFT price : ",
-        (await MarketplaceContarct.getMarketBalance()).toString()
-      );
+      // sold item counter in marketplace should be 1 now
+      // eslint-disable-next-line no-underscore-dangle
+      expect(await MarketplaceContarct.getSoldCounter()).to.equal(1);
       // The buyer should now own the nft
       expect(await NFTContract.ownerOf(1)).to.equal(addr2.address);
-    });
-    // eslint-disable-next-line no-undef
-    it("Should fail for invalid item ids, sold items and when not enough ether is paid", async () => {
-      // fails for invalid item ids
+
+      // make another sell
+      sellerBalanceBeforeMakeSell = await addr1.getBalance();
+
       await expect(
         MarketplaceContarct.connect(addr2).buyNFTItem(2, {
           value: totalPriceInWei,
         })
+      )
+        .to.emit(MarketplaceContarct, "Bought")
+        .withArgs(
+          2,
+          NFTContract.address,
+          2,
+          toWei(price),
+          "0x0000000000000000000000000000000000000000",
+          addr2.address
+        );
+      sellerBalanceAfterMakeSell = await addr1.getBalance();
+      expect(sellerBalanceAfterMakeSell).to.be.above(
+        sellerBalanceBeforeMakeSell
+      );
+    });
+    // eslint-disable-next-line no-undef
+    it("Should fail for invalid item ids, sold items and when not enough ether is paid", async () => {
+      // fails for invalid item ids / we listed 2 items but client want to buy item #3 and #0
+      await expect(
+        MarketplaceContarct.connect(addr2).buyNFTItem(3, {
+          value: totalPriceInWei,
+        })
       ).to.be.revertedWith("Item is not existing");
+
       await expect(
         MarketplaceContarct.connect(addr2).buyNFTItem(0, {
           value: totalPriceInWei,
         })
       ).to.be.revertedWith("Item is not existing");
-      // Fails when not enough ether is paid with the transaction.
-      // In this instance, fails when buyer only sends enough ether to cover the price of the nft
-      // not the additional market fee.
+      // Fails when not enough ether is paid with the transaction. price is 2 eth but client is paying 1 eth
       await expect(
         MarketplaceContarct.connect(addr2).buyNFTItem(1, { value: toWei(1) })
       ).to.be.revertedWith("not enough money to pay");
+
       // addr2 purchases item 1
       await MarketplaceContarct.connect(addr2).buyNFTItem(1, {
         value: totalPriceInWei,
       });
-      // addr3 tries purchasing item 1 after its been sold
+      // // addr3 tries purchasing item 1 after its been sold
       await expect(
         MarketplaceContarct.connect(addr3).buyNFTItem(1, {
           value: totalPriceInWei,
         })
-      ).to.be.revertedWith("item is sold");
+      ).to.be.revertedWith("Item is not for sell !");
     });
   });
 
@@ -206,16 +263,29 @@ describe("NFTMarketplace", () => {
       await MarketplaceContarct.connect(addr1).createEvent(
         toWei(eventTicketPrice),
         eventMaxCap,
+        1,
         { value: toWei(eventTicketPrice / 10) }
       );
 
-      const item = await MarketplaceContarct.EventMapping(1);
+      // get event #1 and check details
+      const item = await MarketplaceContarct.getEventItem(1);
 
       // eslint-disable-next-line no-underscore-dangle
       expect(await MarketplaceContarct._eventCounter()).to.equal(1);
-      expect(item.creator).to.equal(addr1.address);
-      expect(item.price).to.equal(toWei(eventTicketPrice));
-      expect(item.maxCap).to.equal(eventMaxCap);
+      expect(item[0]).to.equal(addr1.address);
+      expect(item[1]).to.equal(toWei(eventTicketPrice));
+      expect(item[2]).to.equal(1);
+      expect(item[3].length).to.equal(0);
+      expect(item[4]).to.equal(eventMaxCap);
+
+      // get events that add1 created and check details
+      const eventsIcreatedArray = await MarketplaceContarct.connect(
+        addr1
+      ).getMyEventsCreated();
+
+      expect(eventsIcreatedArray[0][0]).to.equal(addr1.address);
+      expect(eventsIcreatedArray[0][1]).to.equal(toWei(eventTicketPrice));
+      expect(eventsIcreatedArray[0][2]).to.equal(1);
     });
 
     // eslint-disable-next-line no-undef
@@ -224,24 +294,27 @@ describe("NFTMarketplace", () => {
       await MarketplaceContarct.connect(addr1).createEvent(
         toWei(eventTicketPrice),
         eventMaxCap,
+        1,
         { value: toWei(eventTicketPrice / 10) }
       );
 
-      // buy ticket addr1
+      // buy ticket for event #1
       await MarketplaceContarct.connect(addr2).mintTicket(1, {
         value: toWei(eventTicketPrice),
       });
 
-      // now user array of event 1 should has only 1 user
-      expect(await MarketplaceContarct.getEventUsers(1)).to.have.length(1);
+      // get event #1 and check details
+      const item = await MarketplaceContarct.getEventItem(1);
+      expect(item[3].length).to.equal(1);
+      expect(item[3][0]).to.equal(addr2.address);
 
-      // buy ticket addr2
-      await MarketplaceContarct.connect(addr3).mintTicket(1, {
-        value: toWei(eventTicketPrice),
-      });
+      const eventsIjoinedArray = await MarketplaceContarct.connect(
+        addr2
+      ).getMyEventsJoined();
 
-      // now user array of event 1 should has only 2 user
-      expect(await MarketplaceContarct.getEventUsers(1)).to.have.length(2);
+      // add2 joined event #1
+      expect(eventsIjoinedArray[0][2]).to.equal(1);
+      expect(eventsIjoinedArray[0][3]).to.contain(addr2.address);
     });
 
     // eslint-disable-next-line no-undef
@@ -255,6 +328,7 @@ describe("NFTMarketplace", () => {
       await MarketplaceContarct.connect(addr1).createEvent(
         toWei(eventTicketPrice),
         0,
+        1,
         { value: toWei(eventTicketPrice / 10) }
       );
 

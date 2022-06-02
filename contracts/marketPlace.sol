@@ -60,6 +60,8 @@ contract marketPlace is ReentrancyGuard, Ownable {
         uint256 eventID;
         address[] users;
         uint256 maxCap;
+        uint256 startTime;
+        bool isActive;
     }
     mapping(uint256 => Event) public EventMapping;
 
@@ -96,11 +98,13 @@ contract marketPlace is ReentrancyGuard, Ownable {
         uint256 _price
     ) external nonReentrant returns (bool) {
         require(_price > 0, "Price must be greater than zero");
+        require(
+            _nft.ownerOf(_tokenId) == msg.sender,
+            "You are not owner of this NFT"
+        );
 
         _itemTracker.increment();
         uint256 _itemCount = _itemTracker.current();
-
-        _nft.transferFrom(msg.sender, address(this), _tokenId);
 
         _NFTItem[_itemCount] = NFTItem(
             _itemCount,
@@ -108,9 +112,11 @@ contract marketPlace is ReentrancyGuard, Ownable {
             _tokenId,
             _price,
             payable(msg.sender),
-            payable(address(0)),
+            payable(address(this)),
             false
         );
+
+        _nft.transferFrom(msg.sender, address(this), _tokenId);
 
         emit NFTItemListed(
             _itemCount,
@@ -136,16 +142,18 @@ contract marketPlace is ReentrancyGuard, Ownable {
         require(msg.value == _itemPrice, " not enough money to pay");
 
         NFTItem storage _item = _NFTItem[_itemID];
-        require(_item.sold == false, "item is sold");
+        require(_item.sold == false, "Item is not for sell !");
 
         uint256 _paymentToNFTSeller = _itemPrice - (_itemPrice / 10);
-
         _item.seller.transfer(_paymentToNFTSeller);
+
         _item.owner = payable(msg.sender);
+        _item.seller = payable(address(0));
         _item.sold = true;
-        _item.nft.transferFrom(address(this), msg.sender, _item.tokenId);
 
         _soldItems.increment();
+
+        _item.nft.transferFrom(address(this), msg.sender, _item.tokenId);
 
         emit Bought(
             _itemID,
@@ -164,6 +172,18 @@ contract marketPlace is ReentrancyGuard, Ownable {
         return (_NFTItem[_itemID].price);
     }
 
+    function getTotalItemsListed() external view returns (uint256) {
+        return _itemTracker.current();
+    }
+
+    function getSoldCounter() external view returns (uint256) {
+        return _soldItems.current();
+    }
+
+    function getEventCounter() external view returns (uint256) {
+        return _eventCounter.current();
+    }
+
     function getMarketItems() external view returns (NFTItem[] memory) {
         uint256 totalItems = _itemTracker.current();
         uint256 unSoldItems = totalItems - _soldItems.current();
@@ -173,9 +193,9 @@ contract marketPlace is ReentrancyGuard, Ownable {
         NFTItem[] memory marketItems = new NFTItem[](unSoldItems);
 
         for (uint256 i = 0; i < totalItems; i++) {
-            if (_NFTItem[i + 1].owner == address(0)) {
-                uint256 currentItemId = _NFTItem[i + 1].itemId;
-                NFTItem storage currentItem = _NFTItem[currentItemId];
+            if (_NFTItem[i + 1].owner == address(this)) {
+                uint256 currentId = _NFTItem[i + 1].itemId;
+                NFTItem storage currentItem = _NFTItem[currentId];
                 marketItems[currentIndex] = currentItem;
                 currentIndex += 1;
             }
@@ -234,13 +254,38 @@ contract marketPlace is ReentrancyGuard, Ownable {
         return marketItems;
     }
 
-    //////////////////////////////////////////////////////////////////////////////////////// EVENT SECTION
-    function createEvent(uint256 _eventTicketPrice, uint256 _eventMaxCap)
+    function getNFTItemFromMarket(uint256 _NFTItemCount)
         external
-        payable
-        nonReentrant
-        returns (bool)
+        view
+        returns (
+            uint256,
+            address,
+            uint256,
+            uint256,
+            address,
+            address,
+            bool
+        )
     {
+        NFTItem memory _item = _NFTItem[_NFTItemCount];
+
+        return (
+            _item.itemId,
+            address(_item.nft),
+            _item.tokenId,
+            _item.price,
+            _item.seller,
+            _item.owner,
+            _item.sold
+        );
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////////// EVENT SECTION
+    function createEvent(
+        uint256 _eventTicketPrice,
+        uint256 _eventMaxCap,
+        uint256 _startTime
+    ) external payable nonReentrant returns (bool) {
         require(
             msg.value == (_eventTicketPrice / 10),
             "you need to pay for create event"
@@ -253,6 +298,7 @@ contract marketPlace is ReentrancyGuard, Ownable {
         _newEvent.eventID = _newEventID;
         _newEvent.price = _eventTicketPrice;
         _newEvent.maxCap = _eventMaxCap;
+        _newEvent.startTime = _startTime;
 
         EventMapping[_newEventID] = _newEvent;
 
@@ -290,7 +336,10 @@ contract marketPlace is ReentrancyGuard, Ownable {
 
         address payable _userAddress = payable(msg.sender);
 
-        NFTContractInstance.mintTicket(_userAddress, _ticketURI);
+        uint256 _ticketID = NFTContractInstance.mintTicket(
+            _userAddress,
+            _ticketURI
+        );
         EventMapping[_eventID].users.push(_userAddress);
 
         emit ticketMinted(_userAddress, _eventID, _eventItem.price);
@@ -319,16 +368,32 @@ contract marketPlace is ReentrancyGuard, Ownable {
         return true;
     }
 
+    function startEvent(uint256 _eventID)
+        external
+        onlyCreator(_eventID)
+        returns (bool)
+    {
+        Event memory _eventItem = EventMapping[_eventID];
+        require(
+            block.timestamp >= _eventItem.startTime &&
+                _eventItem.isActive == false
+        );
+
+        _eventItem.isActive = true;
+        EventMapping[_eventID] = _eventItem;
+        return true;
+    }
+
     //////////////////////////////////////////////////////////////////////////////////////// EVENT GETTERS
     function getMyEventsJoined() external view returns (Event[] memory) {
         uint256 _maxEventItems = _eventCounter.current();
         uint256 _EventArrayLength;
 
-        for (uint256 id = 0; id <= _maxEventItems; ++id) {
+        for (uint256 id = 1; id <= _maxEventItems; id++) {
             Event memory _event = EventMapping[id];
 
-            for (uint256 _maxCap = 0; _maxCap < _event.maxCap; ++_maxCap) {
-                if (_event.users[_maxCap] == msg.sender) {
+            for (uint256 _capID = 0; _capID < _event.users.length; _capID++) {
+                if (_event.users[_capID] == msg.sender) {
                     _EventArrayLength = _EventArrayLength + 1;
                 }
             }
@@ -337,11 +402,11 @@ contract marketPlace is ReentrancyGuard, Ownable {
         uint256 currentIndex = 0;
         Event[] memory _eventItems = new Event[](_EventArrayLength);
 
-        for (uint256 id = 0; id <= _maxEventItems; ++id) {
+        for (uint256 id = 1; id <= _maxEventItems; ++id) {
             Event memory _event = EventMapping[id];
 
-            for (uint256 _maxCap = 0; _maxCap < _event.maxCap; ++_maxCap) {
-                if (_event.users[_maxCap] == msg.sender) {
+            for (uint256 _capID = 0; _capID < _event.users.length; _capID++) {
+                if (_event.users[_capID] == msg.sender) {
                     _eventItems[currentIndex] = _event;
                     currentIndex++;
                 }
@@ -355,7 +420,7 @@ contract marketPlace is ReentrancyGuard, Ownable {
         uint256 _maxEventItems = _eventCounter.current();
         uint256 _EventArrayLength;
 
-        for (uint256 id = 0; id <= _maxEventItems; ++id) {
+        for (uint256 id = 1; id <= _maxEventItems; ++id) {
             Event memory _event = EventMapping[id];
 
             if (_event.creator == msg.sender) {
@@ -366,7 +431,7 @@ contract marketPlace is ReentrancyGuard, Ownable {
         uint256 currentIndex = 0;
         Event[] memory _eventItems = new Event[](_EventArrayLength);
 
-        for (uint256 id = 0; id <= _maxEventItems; ++id) {
+        for (uint256 id = 1; id <= _maxEventItems; ++id) {
             Event memory _event = EventMapping[id];
 
             if (_event.creator == msg.sender) {
@@ -403,7 +468,7 @@ contract marketPlace is ReentrancyGuard, Ownable {
     }
 
     function getEventUsers(uint256 _eventID)
-        external
+        public
         view
         returns (address[] memory)
     {
@@ -428,6 +493,16 @@ contract marketPlace is ReentrancyGuard, Ownable {
     function getEventCreator(uint256 _eventID) external view returns (address) {
         Event memory _event = EventMapping[_eventID];
         return _event.creator;
+    }
+
+    function userIsJoined(uint256 _eventID) external view returns (bool) {
+        Event memory _event = EventMapping[_eventID];
+        for (uint256 _capID = 0; _capID < _event.users.length; _capID++) {
+            if (_event.users[_capID] == msg.sender) {
+                return true;
+            }
+        }
+        return false;
     }
 
     //////////////////////////////////////////////////////////////////////////////////////// Market Balance

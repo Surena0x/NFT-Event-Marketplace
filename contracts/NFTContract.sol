@@ -9,7 +9,7 @@ contract NFTContract is ERC721URIStorage, Ownable {
     using Counters for Counters.Counter;
 
     Counters.Counter public NFTItemTracker;
-    mapping(uint256 => string) private NFTIDToURI;
+    mapping(uint256 => string) public NFTIDToURI;
 
     address marketPlace;
 
@@ -19,14 +19,16 @@ contract NFTContract is ERC721URIStorage, Ownable {
         marketPlace = _marketPlaceAddress;
     }
 
-    function mintToken(string memory _URIStorage) external {
+    function mintToken(string memory _URIStorage) external returns (uint256) {
         NFTItemTracker.increment();
         uint256 _NFTID = NFTItemTracker.current();
 
-        _mint(_msgSender(), _NFTID);
+        _mint(msg.sender, _NFTID);
         _setTokenURI(_NFTID, _URIStorage);
 
         setApprovalForAll(marketPlace, true);
+
+        return _NFTID;
     }
 
     function mintTicket(address _userAddress, string memory _URIStorage)
